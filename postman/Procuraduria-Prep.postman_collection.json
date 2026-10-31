@@ -1,0 +1,579 @@
+{
+  "info": {
+    "_postman_id": "c07ed8c8-8842-47bf-aef4-e8fe73e670d5",
+    "name": "Procuraduría Prep - Backend y Gemini",
+    "description": "Flujo de prueba local: registro de primera cuenta, creación de temas, generación opcional con Gemini, persistencia y simulacro. Configura userEmail y userPassword antes de ejecutar. No contiene GEMINI_API_KEY.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "{{userEmail}}",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "{{userPassword}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "studentName", "value": "Estudiante" },
+    { "key": "userEmail", "value": "estudiante@example.com" },
+    { "key": "userPassword", "value": "" },
+    { "key": "csrfToken", "value": "" },
+    { "key": "moduleId", "value": "" },
+    { "key": "topicAId", "value": "" },
+    { "key": "topicBId", "value": "" },
+    { "key": "generatedFlashcards", "value": "[]" },
+    { "key": "questionsTopicA", "value": "[]" },
+    { "key": "questionsTopicB", "value": "[]" },
+    { "key": "quizTopicAId", "value": "" },
+    { "key": "quizTopicBId", "value": "" },
+    { "key": "mockExamId", "value": "" },
+    { "key": "questionId", "value": "" },
+    { "key": "attemptId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 - Registro y temas",
+      "item": [
+        {
+          "name": "1. Obtener token CSRF",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/auth/csrf",
+            "description": "Ejecuta primero esta solicitud. Postman conservará las cookies de CSRF y sesión para el registro."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('CSRF disponible', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.token).to.be.a('string').and.not.empty;",
+                  "    pm.collectionVariables.set('csrfToken', body.token);",
+                  "    pm.collectionVariables.set('csrfHeaderName', body.headerName);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Registrar primera cuenta (ejecutar solo una vez)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{studentName}}\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "description": "Crea la única cuenta permitida por esta versión. Define userPassword en Variables (12-72 caracteres, máximo 72 bytes UTF-8). No vuelvas a ejecutar una vez creada."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cuenta creada', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().email).to.eql(pm.collectionVariables.get('userEmail'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Consultar cuenta autenticada",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/auth/me",
+            "description": "Comprueba HTTP Basic usando userEmail y userPassword."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Autenticación correcta', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Crear módulo de prueba",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Módulo Postman\",\n  \"description\": \"Contenido creado durante la prueba de API\",\n  \"displayOrder\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/study/modules"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Módulo creado', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('moduleId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Crear tema A - Derechos fundamentales",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Derechos fundamentales Postman\",\n  \"description\": \"Tema de prueba para generar material\",\n  \"difficulty\": \"BASIC\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/study/modules/{{moduleId}}/topics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Tema A creado', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('topicAId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Crear tema B - Acciones constitucionales",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acciones constitucionales Postman\",\n  \"description\": \"Segundo tema de prueba para el simulacro\",\n  \"difficulty\": \"BASIC\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/study/modules/{{moduleId}}/topics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Tema B creado', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('topicBId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Gemini (requiere GEMINI_API_KEY en IntelliJ)",
+      "item": [
+        {
+          "name": "1. Pedir explicación a Gemini",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topicName\": \"Acción de tutela\",\n  \"sourceContent\": \"La acción de tutela protege derechos fundamentales cuando resultan vulnerados o amenazados.\",\n  \"learnerLevel\": \"inicial\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/ai/explanations",
+            "description": "La clave de Gemini nunca va en Postman: el backend la lee del entorno configurado en IntelliJ."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gemini devolvió explicación', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().explanation).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Generar tarjetas para tema A",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topicId\": \"{{topicAId}}\",\n  \"topicName\": \"Derechos fundamentales\",\n  \"sourceContent\": \"La Constitución Política de Colombia consagra derechos fundamentales y la acción de tutela como mecanismo de protección.\",\n  \"difficulty\": \"BASIC\",\n  \"quantity\": 3\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/ai/flashcards"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Tarjetas generadas', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const cards = pm.response.json();",
+                  "    pm.expect(cards).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set('generatedFlashcards', JSON.stringify(cards));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Guardar tarjetas generadas en tema A",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topicId\": \"{{topicAId}}\",\n  \"flashcards\": {{generatedFlashcards}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/ai/flashcards/save"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Tarjetas guardadas', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json()).to.be.an('array').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Generar preguntas para tema A",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topicId\": \"{{topicAId}}\",\n  \"topicName\": \"Derechos fundamentales\",\n  \"sourceContent\": \"Los derechos fundamentales están protegidos por la Constitución Política de Colombia.\",\n  \"difficulty\": \"BASIC\",\n  \"quantity\": 3\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/ai/questions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Preguntas del tema A generadas', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const questions = pm.response.json();",
+                  "    pm.expect(questions).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set('questionsTopicA', JSON.stringify(questions));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Guardar preguntas del tema A como cuestionario",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topicId\": \"{{topicAId}}\",\n  \"name\": \"Banco Postman - Derechos\",\n  \"description\": \"Preguntas generadas para el simulacro\",\n  \"difficulty\": \"BASIC\",\n  \"questions\": {{questionsTopicA}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/ai/questions/save"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cuestionario del tema A guardado', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.collectionVariables.set('quizTopicAId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Generar preguntas para tema B",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topicId\": \"{{topicBId}}\",\n  \"topicName\": \"Acciones constitucionales\",\n  \"sourceContent\": \"La acción de tutela protege derechos fundamentales. La acción popular protege derechos e intereses colectivos.\",\n  \"difficulty\": \"BASIC\",\n  \"quantity\": 3\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/ai/questions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Preguntas del tema B generadas', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const questions = pm.response.json();",
+                  "    pm.expect(questions).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set('questionsTopicB', JSON.stringify(questions));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Guardar preguntas del tema B como cuestionario",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topicId\": \"{{topicBId}}\",\n  \"name\": \"Banco Postman - Acciones\",\n  \"description\": \"Preguntas generadas para el simulacro\",\n  \"difficulty\": \"BASIC\",\n  \"questions\": {{questionsTopicB}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/ai/questions/save"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cuestionario del tema B guardado', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.collectionVariables.set('quizTopicBId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 - Simulacro y resultado",
+      "item": [
+        {
+          "name": "1. Crear simulacro de ambos temas",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Simulacro Postman\",\n  \"description\": \"Simulacro de prueba de dos temas\",\n  \"topicIds\": [\"{{topicAId}}\", \"{{topicBId}}\"],\n  \"difficulty\": \"BASIC\",\n  \"questionCount\": 4,\n  \"durationMinutes\": 30\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/quizzes/mock-exams"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Simulacro creado', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    const exam = pm.response.json();",
+                  "    pm.collectionVariables.set('mockExamId', exam.id);",
+                  "    pm.expect(exam.questionCount).to.eql(4);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Consultar preguntas del simulacro",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/quizzes/{{mockExamId}}/questions?page=0&size=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Preguntas disponibles sin respuestas correctas', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const page = pm.response.json();",
+                  "    pm.expect(page.content).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set('questionId', page.content[0].id);",
+                  "    pm.expect(page.content[0]).not.to.have.property('correctOptionIndex');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Iniciar intento",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/quizzes/{{mockExamId}}/attempts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Intento iniciado con vencimiento', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    const attempt = pm.response.json();",
+                  "    pm.collectionVariables.set('attemptId', attempt.id);",
+                  "    pm.expect(attempt.deadlineAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Registrar respuesta de prueba",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questionId\": \"{{questionId}}\",\n  \"selectedOptionIndex\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/quiz-attempts/{{attemptId}}/answers"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Respuesta registrada', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Finalizar intento y consultar resultado",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-XSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/quiz-attempts/{{attemptId}}/finish"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Resultado calculado', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().scorePercentage).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
