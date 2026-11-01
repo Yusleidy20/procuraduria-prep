@@ -63,9 +63,7 @@ public class DocumentService {
 		String extension = extensionOf(originalName);
 		String expectedContentType = contentTypeFor(extension);
 		String contentType = file.getContentType();
-		if (contentType != null && !contentType.isBlank()
-				&& !expectedContentType.equalsIgnoreCase(contentType)
-				&& !"application/octet-stream".equalsIgnoreCase(contentType)) {
+		if (!isCompatibleContentType(extension, contentType)) {
 			throw new InvalidRequestException("La extensión y el tipo de contenido del archivo no coinciden");
 		}
 
@@ -145,6 +143,26 @@ public class DocumentService {
 			throw new InvalidRequestException("Solo se admiten archivos PDF, TXT o Markdown");
 		}
 		return extension;
+	}
+
+	private boolean isCompatibleContentType(String extension, String contentType) {
+		if (contentType == null || contentType.isBlank()
+				|| "application/octet-stream".equalsIgnoreCase(contentType)) {
+			return true;
+		}
+		String normalizedType = contentType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+		return switch (extension) {
+			case ".pdf" -> normalizedType.equals("application/pdf")
+					|| normalizedType.equals("application/x-pdf")
+					|| normalizedType.equals("application/acrobat")
+					|| normalizedType.equals("application/vnd.pdf")
+					|| normalizedType.equals("text/pdf");
+			case ".txt" -> normalizedType.equals("text/plain");
+			case ".md" -> normalizedType.equals("text/markdown")
+					|| normalizedType.equals("text/x-markdown")
+					|| normalizedType.equals("text/plain");
+			default -> false;
+		};
 	}
 
 	private String contentTypeFor(String extension) {

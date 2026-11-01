@@ -5,6 +5,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +21,8 @@ import com.yusdev.procuraduriaprep.ai.service.AiInsufficientContextException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+	private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
 	@ExceptionHandler(ResourceNotFoundException.class)
 	ProblemDetail handleNotFound(ResourceNotFoundException exception) {
@@ -44,6 +48,9 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(AiProviderException.class)
 	ProblemDetail handleAiProvider(AiProviderException exception) {
+		if (exception.isTimeout()) {
+			return problem(HttpStatus.GATEWAY_TIMEOUT, "El proveedor de IA tardó demasiado en responder");
+		}
 		return problem(HttpStatus.BAD_GATEWAY, exception.getMessage());
 	}
 
@@ -73,6 +80,14 @@ public class GlobalExceptionHandler {
 	ResponseEntity<ProblemDetail> handleDataIntegrity(DataIntegrityViolationException exception) {
 		return ResponseEntity.status(HttpStatus.CONFLICT)
 				.body(problem(HttpStatus.CONFLICT, "La operación entra en conflicto con datos existentes"));
+	}
+
+	@ExceptionHandler(Exception.class)
+	ResponseEntity<ProblemDetail> handleUnexpected(Exception exception) {
+		logger.error("Unhandled API request failure; exceptionType={}", exception.getClass().getName(), exception);
+		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+				.body(problem(HttpStatus.INTERNAL_SERVER_ERROR,
+						"Ocurrió un problema interno al procesar la solicitud"));
 	}
 
 	private ProblemDetail problem(HttpStatus status, String detail) {

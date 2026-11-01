@@ -86,7 +86,7 @@ public class GroqAiTutorService implements AiProvider {
             int status = exception.getStatusCode().value();
             logger.warn("Groq request failed: HTTP {}, latencyMs={}", status, elapsedMillis(startedAt));
             throw new AiProviderException(publicMessageForStatus(status), "Groq",
-                    isRetryableStatus(status), status);
+                    isRetryableStatus(status), status, status == 408 || status == 504);
         } catch (RestClientException exception) {
             Throwable rootCause = getRootCause(exception);
             logger.warn("Groq request failed without an HTTP response; model={}, rootCauseType={}, latencyMs={}",
@@ -96,7 +96,8 @@ public class GroqAiTutorService implements AiProvider {
                     ? "El proveedor Groq agotó el tiempo de espera"
                     : "No fue posible obtener una respuesta del proveedor Groq";
             throw new AiProviderException(publicMessage,
-                    "Groq", true, null);
+                    "Groq", true, null,
+                    rootCause instanceof HttpTimeoutException || rootCause instanceof SocketTimeoutException);
         }
     }
 

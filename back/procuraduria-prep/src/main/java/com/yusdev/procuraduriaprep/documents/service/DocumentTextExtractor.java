@@ -26,8 +26,11 @@ public class DocumentTextExtractor {
 	public List<ExtractedPage> extractPages(String contentType, byte[] content) {
 		if ("application/pdf".equals(contentType)) {
 			List<ExtractedPage> pages = extractPdfPages(content);
+			if (pages.isEmpty()) {
+				throw new InvalidRequestException("El PDF no contiene páginas legibles");
+			}
 			if (pages.stream().allMatch(page -> page.text().isBlank())) {
-				throw new InvalidRequestException("El PDF no contiene texto extraíble; los documentos escaneados requieren OCR");
+				throw new InvalidRequestException("El PDF no contiene texto extraíble; si es escaneado, requiere OCR");
 			}
 			return pages;
 		}
@@ -38,10 +41,6 @@ public class DocumentTextExtractor {
 	}
 
 	private List<ExtractedPage> extractPdfPages(byte[] content) {
-		if (content.length < 5 || content[0] != '%' || content[1] != 'P'
-				|| content[2] != 'D' || content[3] != 'F' || content[4] != '-') {
-			throw new InvalidRequestException("El archivo no contiene una cabecera PDF válida");
-		}
 		try (var document = Loader.loadPDF(content)) {
 			List<ExtractedPage> pages = new ArrayList<>();
 			for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
@@ -52,7 +51,7 @@ public class DocumentTextExtractor {
 			}
 			return pages;
 		} catch (IOException exception) {
-			throw new InvalidRequestException("No fue posible leer el archivo PDF");
+			throw new InvalidRequestException("No fue posible leer el PDF; puede estar dañado o protegido con contraseña");
 		}
 
 	}

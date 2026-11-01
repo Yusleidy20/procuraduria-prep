@@ -104,7 +104,7 @@ public class GeminiAiTutorService implements AiTutorService, AiProvider {
             logger.warn("Gemini request failed: HTTP {} - {}", status,
                     sanitizeProviderMessage(providerMessage, prompt));
             throw new AiProviderException("No fue posible obtener una respuesta válida del proveedor de IA",
-                    "Gemini", isRetryableStatus(status), status);
+                    "Gemini", isRetryableStatus(status), status, status == 408 || status == 504);
         } catch (RestClientException exception) {
             Throwable rootCause = getRootCause(exception);
             logger.warn("Gemini temporary transport diagnostics: no HTTP response; model={}, rootCauseType={}, "
@@ -112,7 +112,8 @@ public class GeminiAiTutorService implements AiTutorService, AiProvider {
                     sanitizeProviderMessage(rootCause.getMessage() == null ? "No detail" : rootCause.getMessage(),
                             prompt), exception);
             throw new AiProviderException("No fue posible obtener una respuesta válida del proveedor de IA",
-                    "Gemini", true, null);
+                    "Gemini", true, null, rootCause instanceof java.net.http.HttpTimeoutException
+                            || rootCause instanceof java.net.SocketTimeoutException);
         }
     }
 

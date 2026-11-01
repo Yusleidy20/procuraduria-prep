@@ -80,6 +80,10 @@ public class AiProviderCoordinator implements AiTutorService {
                         fallbackFailure.getClass().getSimpleName(),
                         fallbackFailure instanceof AiProviderException providerException
                                 ? providerException.getHttpStatus() : null);
+                if (fallbackFailure instanceof AiProviderException providerException
+                        && providerException.isTimeout()) {
+                    throw providerException;
+                }
                 throw new AiProviderException("No fue posible obtener una respuesta del proveedor de IA");
             }
         }
