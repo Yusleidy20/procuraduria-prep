@@ -11,6 +11,9 @@ import type {
   StudyTopic,
   TopicProgress,
   TopicExplanationResponse,
+  StudyChatResponse,
+  StudyConversationDetail,
+  StudyConversationSummary,
 } from "./types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
@@ -20,6 +23,7 @@ export class ApiError extends Error {
   constructor(
     readonly kind: "network" | "timeout" | "http",
     readonly status?: number,
+    readonly detail?: string,
   ) {
     super(kind);
     this.name = "ApiError";
@@ -65,7 +69,19 @@ async function request(
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new ApiError("http", response.status);
+    let detail: string | undefined;
+    if (response.status === 400) {
+      try {
+        const body: unknown = await response.clone().json();
+        if (body && typeof body === "object" && "detail" in body
+          && typeof body.detail === "string" && body.detail.length <= 240) {
+          detail = body.detail;
+        }
+      } catch {
+        detail = undefined;
+      }
+    }
+    throw new ApiError("http", response.status, detail);
   }
 
   try {
@@ -97,6 +113,23 @@ async function postJson<T>(
     body: JSON.stringify(body),
   });
   if (response.status === 204) return undefined as T;
+  return readJson<T>(response);
+}
+
+async function patchJson<T>(
+  path: string,
+  auth: { email: string; password: string },
+  body: unknown,
+): Promise<T> {
+  const csrf = await getCsrfToken(auth);
+  const response = await request(path, auth, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      [csrf.headerName]: csrf.token,
+    },
+    body: JSON.stringify(body),
+  });
   return readJson<T>(response);
 }
 
@@ -212,9 +245,78 @@ export async function finishQuizAttempt(auth: { email: string; password: string 
 
 export async function explainTopic(
   auth: { email: string; password: string },
-  requestBody: { topicName: string; learnerLevel: string; sourceDocumentId?: string },
+  requestBody: {
+    topicName: string;
+    learnerLevel: string;
+    sourceDocumentId?: string;
+    previousQuestions?: string[];
+  },
 ) {
   return postJson<TopicExplanationResponse>("/api/v1/ai/explanations", auth, requestBody);
+}
+
+export async function listStudyConversations(auth: { email: string; password: string }) {
+  const response = await request("/api/v1/study/conversations", auth);
+  return readJson<StudyConversationSummary[]>(response);
+}
+
+export async function createStudyConversation(
+  auth: { email: string; password: string },
+  title?: string,
+) {
+  return postJson<StudyConversationSummary>("/api/v1/study/conversations", auth, { title });
+}
+
+export async function getStudyConversation(
+  auth: { email: string; password: string },
+  conversationId: string,
+) {
+  const response = await request(
+    `/api/v1/study/conversations/${encodeURIComponent(conversationId)}`,
+    auth,
+  );
+  return readJson<StudyConversationDetail>(response);
+}
+
+export async function renameStudyConversation(
+  auth: { email: string; password: string },
+  conversationId: string,
+  title: string,
+) {
+  return patchJson<StudyConversationSummary>(
+    `/api/v1/study/conversations/${encodeURIComponent(conversationId)}`,
+    auth,
+    { title },
+  );
+}
+
+export async function deleteStudyConversation(
+  auth: { email: string; password: string },
+  conversationId: string,
+) {
+  const csrf = await getCsrfToken(auth);
+  const response = await request(
+    `/api/v1/study/conversations/${encodeURIComponent(conversationId)}`,
+    auth,
+    { method: "DELETE", headers: { [csrf.headerName]: csrf.token } },
+  );
+  if (!response.ok) throw new ApiError("http", response.status);
+}
+
+export async function sendStudyMessage(
+  auth: { email: string; password: string },
+  conversationId: string,
+  requestBody: {
+    content: string;
+    learnerLevel: string;
+    sourceDocumentId?: string;
+  },
+) {
+  return postJson<StudyChatResponse>(
+    `/api/v1/study/conversations/${encodeURIComponent(conversationId)}/messages`,
+    auth,
+    requestBody,
+  );
 }
 
 export async function getDocumentText(
@@ -244,9 +346,52 @@ export function getErrorMessage(error: unknown): string {
       return "No se pudo autenticar. Verifica tu correo y contraseña.";
     case 403:
       return "La sesión de seguridad expiró. Vuelve a conectar e inténtalo de nuevo.";
+    case 404:
+      return "La conversación ya no está disponible. Actualiza el historial e inténtalo de nuevo.";
     case 422:
       return "No encontré información suficiente en los documentos para responder. Prueba con otro tema o documento.";
+    case 408:
+    case 504:
+      return "La consulta tardó demasiado. Comprueba tu conexión e inténtalo de nuevo.";
+    case 429:
+      return "El servicio de IA está atendiendo demasiadas consultas. Inténtalo más tarde.";
     case 400:
+      if (error.detail) {
+        const detail = error.detail.toLocaleLowerCase("es");
+        if (detail.includes("requiere ocr")) {
+          return "Este PDF no contiene texto seleccionable. Si es un escaneo, necesita OCR, que aún no está disponible.";
+        }
+        if (detail.includes("no contiene texto extraíble")) {
+          return "El PDF no contiene texto extraíble. Si es un documento escaneado, necesita OCR.";
+        }
+        if (detail.includes("no contiene páginas legibles")) {
+          return "El PDF no contiene páginas legibles.";
+        }
+        if (detail.includes("contenido no es un pdf válido")) {
+          return "El archivo tiene extensión PDF, pero su contenido no es un PDF válido.";
+        }
+        if (detail.includes("leer el pdf") || detail.includes("leer el archivo pdf")) {
+          return "No fue posible leer el PDF. Comprueba que no esté dañado o protegido con contraseña.";
+        }
+        if (detail.includes("archivo no vacío")) {
+          return "El archivo está vacío. Selecciona un documento que tenga contenido.";
+        }
+        if (detail.includes("no contiene texto")) {
+          return "El documento de texto está vacío.";
+        }
+        if (detail.includes("codificados en utf-8")) {
+          return "El archivo TXT o Markdown debe estar codificado en UTF-8.";
+        }
+        if (detail.includes("extensión y el tipo de contenido")) {
+          return "La extensión no coincide con el tipo de archivo. Selecciona el archivo original sin cambiar su extensión.";
+        }
+        if (detail.includes("cabecera pdf válida")) {
+          return "El archivo tiene extensión PDF, pero su contenido no es un PDF válido.";
+        }
+        if (detail.includes("solo se admiten archivos pdf, txt o markdown")) {
+          return "El formato no es compatible. Usa PDF, TXT o Markdown.";
+        }
+      }
       return "El archivo no es válido. Usa un PDF, TXT o Markdown con un nombre y contenido válidos.";
     case 413:
       return "El archivo supera el límite permitido de 10 MiB.";
@@ -256,8 +401,8 @@ export function getErrorMessage(error: unknown): string {
       return "El servicio de IA no pudo completar la consulta. Inténtalo más tarde.";
     case 503:
       return "El servicio de IA no está disponible en este momento. Inténtalo más tarde.";
-    case 504:
-      return "La consulta tardó demasiado. Comprueba tu conexión e inténtalo de nuevo.";
+    case 500:
+      return "El servidor encontró un problema al procesar la consulta. Inténtalo de nuevo; si continúa, contacta con soporte.";
     default:
       return "No fue posible completar la solicitud. Inténtalo de nuevo.";
   }

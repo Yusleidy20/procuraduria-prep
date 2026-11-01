@@ -11,6 +11,34 @@ export interface TopicExplanationResponse {
   sources: DocumentSourceReference[];
 }
 
+export interface StudyConversationSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface StudyChatMessage {
+  id: string;
+  role: "USER" | "ASSISTANT";
+  content: string;
+  keyPoints: string | null;
+  sources: DocumentSourceReference[];
+  createdAt: string;
+}
+
+export interface StudyConversationDetail {
+  conversation: StudyConversationSummary;
+  messages: StudyChatMessage[];
+}
+
+export interface StudyChatResponse {
+  conversation: StudyConversationSummary;
+  userMessage: StudyChatMessage;
+  assistantMessage: StudyChatMessage;
+}
+
 export interface DocumentResponse {
   id: string;
   originalName: string;
