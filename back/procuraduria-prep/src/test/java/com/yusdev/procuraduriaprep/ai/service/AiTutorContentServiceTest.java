@@ -13,6 +13,7 @@ import org.mockito.Mockito;
 import com.yusdev.procuraduriaprep.ai.dto.DocumentSourceReference;
 import com.yusdev.procuraduriaprep.ai.dto.ExplainTopicRequest;
 import com.yusdev.procuraduriaprep.ai.dto.GenerateStudyContentRequest;
+import com.yusdev.procuraduriaprep.ai.dto.StudyConversationContextMessage;
 import com.yusdev.procuraduriaprep.documents.service.DocumentRetrievalService;
 import com.yusdev.procuraduriaprep.documents.service.RetrievedDocumentContext;
 import com.yusdev.procuraduriaprep.study.entity.DifficultyLevel;
@@ -82,8 +83,101 @@ class AiTutorContentServiceTest {
             var result = service.explainTopic(new ExplainTopicRequest("Tema", null, null, null), provider);
 
             assertEquals(List.of(), result.sources());
-            assertTrue(result.explanation().contains("No encontré información suficiente"));
+            assertTrue(result.explanation().contains("No encontré fragmentos relevantes"));
             Mockito.verifyNoInteractions(provider);
+        } finally {
+            validatorFactory.close();
+        }
+    }
+
+    @Test
+    void searchesEntireLibraryForNaturalLanguageTopicAndPassesRetrievedEvidenceToProvider() {
+        var validatorFactory = Validation.buildDefaultValidatorFactory();
+        try {
+            var retrieval = Mockito.mock(DocumentRetrievalService.class);
+            var source = new DocumentSourceReference(UUID.randomUUID(), "manual.pdf", 9, 2);
+            String topic = "Gestión pública y funcionamiento del Estado";
+            Mockito.when(retrieval.retrieve(topic, null))
+                    .thenReturn(new RetrievedDocumentContext(
+                            "[S1] Documento: manual.pdf, página 9, fragmento 2\nLa función pública organiza la gestión estatal.",
+                            List.of(source)));
+            var service = new AiTutorContentService(JsonMapper.builder().build(),
+                    new AiOutputValidator(validatorFactory.getValidator()), retrieval);
+            var prompts = new java.util.ArrayList<String>();
+            AiProvider provider = (prompt, schema) -> {
+                prompts.add(prompt);
+                return """
+                        {"explanation":"La fuente describe la gestión estatal [S1].","keyPoints":"Función pública"}
+                        """;
+            };
+
+            var response = service.explainTopic(
+                    new ExplainTopicRequest(topic, null, "Inicial", null), provider);
+
+            Mockito.verify(retrieval).retrieve(topic, null);
+            assertTrue(prompts.get(0).contains(topic));
+            assertTrue(prompts.get(0).contains("La función pública organiza la gestión estatal."));
+            assertEquals(List.of(source), response.sources());
+        } finally {
+            validatorFactory.close();
+        }
+    }
+
+    @Test
+    void distinguishesAnEmptyLibraryFromDocumentsWithoutRelevantFragments() {
+        var validatorFactory = Validation.buildDefaultValidatorFactory();
+        try {
+            var retrieval = Mockito.mock(DocumentRetrievalService.class);
+            Mockito.when(retrieval.retrieve("Gestión pública", null))
+                    .thenReturn(new RetrievedDocumentContext("", List.of(), true));
+            var service = new AiTutorContentService(JsonMapper.builder().build(),
+                    new AiOutputValidator(validatorFactory.getValidator()), retrieval);
+
+            var response = service.explainTopic(
+                    new ExplainTopicRequest("Gestión pública", null, "Inicial", null),
+                    Mockito.mock(AiProvider.class));
+
+            assertTrue(response.explanation().contains("biblioteca aún no tiene documentos"));
+            assertTrue(response.keyPoints().contains("Carga material"));
+        } finally {
+            validatorFactory.close();
+        }
+    }
+
+    @Test
+    void searchesUsingTheFollowUpAndPreviousQuestionsAndReturnsOnlyRetrievedSources() {
+        var validatorFactory = Validation.buildDefaultValidatorFactory();
+        try {
+            var retrieval = Mockito.mock(DocumentRetrievalService.class);
+            var source = new DocumentSourceReference(UUID.randomUUID(), "ley.pdf", 4, 2);
+            Mockito.when(retrieval.retrieve(
+                    "¿Qué diferencia hay?", null, List.of("Explícame la falta disciplinaria")))
+                    .thenReturn(new RetrievedDocumentContext("Fragmento [S1]: evidencia documental", List.of(source)));
+            var service = new AiTutorContentService(JsonMapper.builder().build(),
+                    new AiOutputValidator(validatorFactory.getValidator()), retrieval);
+            var request = new ExplainTopicRequest("¿Qué diferencia hay?", null, "Intermedio", null,
+                    List.of("Explícame la falta disciplinaria"), List.of(
+                            new StudyConversationContextMessage("USER", "Explícame la falta disciplinaria"),
+                            new StudyConversationContextMessage("ASSISTANT", "La norma describe sus elementos.")));
+            var prompts = new java.util.ArrayList<String>();
+            AiProvider provider = (prompt, schema) -> {
+                prompts.add(prompt);
+                return """
+                        {"explanation":"Diferencia basada en la fuente [S1].","keyPoints":"Revisar el contexto."}
+                        """;
+            };
+
+            var response = service.explainTopic(request, provider);
+
+            Mockito.verify(retrieval).retrieve(
+                    request.topicName(), null, request.previousQuestions());
+            assertEquals(List.of(source), response.sources());
+            assertTrue(prompts.get(0).contains("Analiza la intención"));
+            assertTrue(prompts.get(0).contains("No afirmes vigencia normativa"));
+            assertTrue(prompts.get(0).contains("Explícame la falta disciplinaria"));
+            assertTrue(prompts.get(0).contains("Historial reciente de conversación (solo contexto, no evidencia jurídica)"));
+            assertTrue(prompts.get(0).contains("ASSISTANT: La norma describe sus elementos."));
+            assertTrue(prompts.get(0).contains("Fragmento [S1]"));
         } finally {
             validatorFactory.close();
         }

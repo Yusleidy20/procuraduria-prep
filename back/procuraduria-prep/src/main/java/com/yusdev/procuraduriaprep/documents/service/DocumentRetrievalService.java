@@ -43,14 +43,24 @@ public class DocumentRetrievalService {
 
     @Transactional
     public RetrievedDocumentContext retrieve(String query, UUID documentId) {
+        return retrieve(query, documentId, List.of());
+    }
+
+    @Transactional
+    public RetrievedDocumentContext retrieve(String query, UUID documentId, List<String> previousQuestions) {
         List<DocumentChunk> chunks;
+        boolean libraryEmpty = false;
         if (documentId == null) {
             for (StudyDocument document : documentRepository
                     .findCompletedDocumentsWithoutChunks(DocumentStatus.COMPLETED)) {
+                if (document.getExtractedText() == null || document.getExtractedText().isBlank()) {
+                    continue;
+                }
                 chunkingService.index(document, List.of(new DocumentTextExtractor.ExtractedPage(
                         null, document.getExtractedText())));
             }
             chunks = chunkRepository.findAllByDocument_StatusNot(DocumentStatus.INACTIVE);
+            libraryEmpty = documentRepository.countByStatusNot(DocumentStatus.INACTIVE) == 0;
         } else {
             StudyDocument document = documentRepository.findById(documentId)
                     .orElseThrow(() -> new ResourceNotFoundException("Documento", documentId));
@@ -70,15 +80,19 @@ public class DocumentRetrievalService {
             }
         }
 
-        Map<String, Integer> queryVector = parseVector(chunkingService.vectorize(query));
-        if (queryVector.isEmpty()) {
-            return new RetrievedDocumentContext("", List.of());
+        List<String> searchQueries = new ArrayList<>();
+        searchQueries.add(query);
+        previousQuestions.stream()
+                .filter(question -> question != null && !question.isBlank())
+                .limit(5)
+                .forEach(searchQueries::add);
+        List<ScoredChunk> scored = score(chunks, searchQueries);
+        if (scored.isEmpty()) {
+            String refinedQuery = refineQuery(query);
+            if (!refinedQuery.isBlank() && !refinedQuery.equalsIgnoreCase(query.strip())) {
+                scored = score(chunks, List.of(refinedQuery));
+            }
         }
-        List<ScoredChunk> scored = chunks.stream()
-                .map(chunk -> new ScoredChunk(chunk, similarity(query, queryVector, chunk)))
-                .filter(item -> item.score() > 0.01)
-                .sorted(Comparator.comparingDouble(ScoredChunk::score).reversed())
-                .toList();
 
         List<DocumentSourceReference> sources = new ArrayList<>();
         StringBuilder context = new StringBuilder();
@@ -100,7 +114,41 @@ public class DocumentRetrievalService {
             context.append(", fragmento ").append(chunk.getChunkIndex()).append("\n")
                     .append(text).append("\n\n");
         }
-        return new RetrievedDocumentContext(context.toString().strip(), sources);
+        return new RetrievedDocumentContext(context.toString().strip(), sources, libraryEmpty);
+    }
+
+    private List<ScoredChunk> score(List<DocumentChunk> chunks, List<String> queries) {
+        List<QueryVector> queryVectors = queries.stream()
+                .map(query -> new QueryVector(query, parseVector(chunkingService.vectorize(query))))
+                .filter(query -> !query.vector().isEmpty())
+                .toList();
+        if (queryVectors.isEmpty()) {
+            return List.of();
+        }
+        return chunks.stream()
+                .map(chunk -> new ScoredChunk(chunk, queryVectors.stream()
+                        .mapToDouble(query -> similarity(query.query(), query.vector(), chunk)).max().orElse(0)))
+                .filter(item -> item.score() > 0.01)
+                .sorted(Comparator.comparingDouble(ScoredChunk::score).reversed())
+                .toList();
+    }
+
+    private String refineQuery(String query) {
+        java.util.Set<String> stopWords = java.util.Set.of(
+                "que", "qué", "como", "cómo", "cual", "cuál", "cuales", "cuáles", "donde", "dónde",
+                "cuando", "cuándo", "por", "para", "sobre", "entre", "desde", "hacia", "con", "sin",
+                "una", "uno", "unos", "unas", "las", "los", "del", "de", "el", "la", "en", "es",
+                "son", "ser", "está", "estan", "están", "hay", "me", "mi", "este", "esta", "estos",
+                "estas", "explica", "explícame", "explicame", "dime", "compara", "diferencias");
+        Matcher matcher = TOKEN_PATTERN.matcher(normalize(query));
+        List<String> terms = new ArrayList<>();
+        while (matcher.find()) {
+            String term = matcher.group();
+            if (term.length() > 2 && !stopWords.contains(term)) {
+                terms.add(term);
+            }
+        }
+        return String.join(" ", terms);
     }
 
     private double similarity(String query, Map<String, Integer> queryVector, DocumentChunk chunk) {
@@ -144,5 +192,8 @@ public class DocumentRetrievalService {
     }
 
     private record ScoredChunk(DocumentChunk chunk, double score) {
+    }
+
+    private record QueryVector(String query, Map<String, Integer> vector) {
     }
 }

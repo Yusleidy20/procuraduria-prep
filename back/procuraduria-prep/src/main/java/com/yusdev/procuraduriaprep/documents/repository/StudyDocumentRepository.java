@@ -15,11 +15,12 @@ public interface StudyDocumentRepository extends JpaRepository<StudyDocument, UU
 
 	Page<StudyDocument> findAllByStatusNot(DocumentStatus status, Pageable pageable);
 
+	long countByStatusNot(DocumentStatus status);
+
 	@Query("""
 			select document from StudyDocument document
 			where document.status = :completed
 				and document.extractedText is not null
-				and document.extractedText <> ''
 				and not exists (
 					select chunk.id from DocumentChunk chunk
 					where chunk.document = document
