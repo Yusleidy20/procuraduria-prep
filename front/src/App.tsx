@@ -16,15 +16,14 @@ import { AIStudyView } from "./AIStudyView";
 import {
   DashboardView,
   MaterialsView,
-  NAV_ITEMS,
   ProgressView,
   ReviewsView,
-  SectionId,
   SimulatorsView,
   StudyData,
   StudyPlanView,
   SyllabusView,
 } from "./StudyViews";
+import { NAV_ITEMS, type SectionId } from "./navigation";
 import { SYLLABUS } from "./syllabus";
 import type {
   AuthenticatedUser,
@@ -143,6 +142,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [documentsWarning, setDocumentsWarning] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
 
   useEffect(() => {
     if (!credentials) return;
@@ -160,7 +160,7 @@ function App() {
   async function refreshStudyData(auth: Credentials) {
     const loaded = await loadStudyData(auth);
     setStudyData(loaded.data);
-    setDocuments(loaded.documents.filter((document) => document.status === "COMPLETED"));
+    setDocuments(loaded.documents);
     setDocumentsWarning(loaded.documentsError ? "No se pudo cargar la lista de documentos; puedes consultar todos los documentos." : "");
   }
 
@@ -215,6 +215,14 @@ function App() {
     setErrorMessage("");
   }
 
+  const normalizedSearch = globalSearch.trim().toLocaleLowerCase("es");
+  const matchingTopics = normalizedSearch
+    ? SYLLABUS.filter((topic) => topic.title.toLocaleLowerCase("es").includes(normalizedSearch)).slice(0, 4)
+    : [];
+  const matchingDocuments = normalizedSearch
+    ? documents.filter((document) => document.originalName.toLocaleLowerCase("es").includes(normalizedSearch)).slice(0, 4)
+    : [];
+
   function startTopic(topicTitle: string, sourceDocumentId = "") {
     const topic = SYLLABUS.find((item) => item.title === topicTitle);
     if (topic) beginTopic(topic.id);
@@ -245,13 +253,13 @@ function App() {
     if (!credentials || !user) return null;
     switch (selectedSection) {
       case "dashboard":
-        return <DashboardView user={user} data={studyData} plan={plan} onStartTopic={startTopic} onNavigate={navigate} />;
+        return <DashboardView user={user} data={studyData} plan={plan} documents={documents} onStartTopic={startTopic} onNavigate={navigate} />;
       case "plan":
         return <StudyPlanView plan={plan} onStartTopic={startTopic} onBegin={beginTopic} onToggleComplete={toggleComplete} />;
       case "syllabus":
-        return <SyllabusView plan={plan} onStartTopic={startTopic} onToggleComplete={toggleComplete} />;
+        return <SyllabusView plan={plan} onStartTopic={startTopic} onToggleComplete={toggleComplete} onNavigate={navigate} />;
       case "materials":
-        return <MaterialsView auth={credentials} documents={documents} onUpload={handleUploadDocument} onDelete={handleDeleteDocument} />;
+        return <MaterialsView documents={documents} onUpload={handleUploadDocument} onDelete={handleDeleteDocument} />;
       case "ai":
         return <AIStudyView key={`${aiInitialTopic}:${aiInitialSourceDocumentId}`} auth={credentials} documents={documents} initialTopic={aiInitialTopic} initialSourceDocumentId={aiInitialSourceDocumentId} />;
       case "simulators":
@@ -295,7 +303,29 @@ function App() {
       <div className="sidebar-user"><span className="avatar" aria-hidden="true">{(user?.name || user?.email || "E").slice(0, 1).toUpperCase()}</span><div className="user-data"><strong>{user?.name || "Estudiante"}</strong><span>{user?.email}</span></div><button className="logout-button" onClick={disconnect} aria-label="Cerrar sesión" title="Cerrar sesión">↗</button></div>
     </aside>
     <div className="main-column">
-      <header className="workspace-header"><button className="mobile-menu-button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((open) => !open)}><span /><span /><span /></button><div className="breadcrumb"><span>Mi espacio</span><span aria-hidden="true">/</span><strong>{NAV_ITEMS.find((item) => item.id === selectedSection)?.label}</strong></div><div className="header-right"><span className="connection-indicator"><span aria-hidden="true" />Conectado</span><span className="header-user">{user?.name || user?.email}</span></div></header>
+      <header className="workspace-header">
+        <button className="mobile-menu-button" aria-label="Abrir navegación" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((open) => !open)}><span /><span /><span /></button>
+        <div className="breadcrumb"><span>Mi espacio</span><span aria-hidden="true">/</span><strong>{NAV_ITEMS.find((item) => item.id === selectedSection)?.label}</strong></div>
+        <div className="header-search">
+          <label className="sr-only" htmlFor="workspace-search">Buscar temas o documentos</label>
+          <span className="search-icon" aria-hidden="true">⌕</span>
+          <input id="workspace-search" type="search" value={globalSearch} onChange={(event) => setGlobalSearch(event.target.value)} placeholder="Buscar tema o documento" autoComplete="off" />
+          {normalizedSearch && <div className="search-results" role="region" aria-label="Resultados de búsqueda">
+            {matchingTopics.map((topic) => <button key={topic.id} type="button" onClick={() => { startTopic(topic.title); setGlobalSearch(""); }}>
+              <span className="search-result-icon" aria-hidden="true">T</span><span><strong>{topic.title}</strong><small>Temario · {topic.area}</small></span><span className="search-result-arrow" aria-hidden="true">↗</span>
+            </button>)}
+            {matchingDocuments.filter((document) => document.status === "COMPLETED").map((document) => <button key={document.id} type="button" onClick={() => { startTopic(`Consultar ${document.originalName}`, document.id); setGlobalSearch(""); }}>
+              <span className="search-result-icon document" aria-hidden="true">D</span><span><strong>{document.originalName}</strong><small>Documento · abrir consulta con IA</small></span><span className="search-result-arrow" aria-hidden="true">↗</span>
+            </button>)}
+            {matchingTopics.length === 0 && matchingDocuments.filter((document) => document.status === "COMPLETED").length === 0 && <p>No encontramos temas ni documentos con ese nombre.</p>}
+          </div>}
+        </div>
+        <div className="header-right">
+          <span className="connection-indicator"><span aria-hidden="true" />Conectado</span>
+          <span className="header-avatar" aria-hidden="true">{(user?.name || user?.email || "E").slice(0, 1).toUpperCase()}</span>
+          <span className="header-user">{user?.name || user?.email}</span>
+        </div>
+      </header>
       <main className="content-area">
         {isLoadingData && <div className="loading-banner" role="status"><span className="spinner spinner-dark" aria-hidden="true" /> Cargando tu espacio de estudio…</div>}
         {documentsWarning && <p className="notice notice-info" role="status">{documentsWarning}</p>}

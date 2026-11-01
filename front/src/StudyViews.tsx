@@ -8,6 +8,7 @@ import {
   submitQuizAnswer,
 } from "./api";
 import { ResponseContent } from "./ResponseContent";
+import type { SectionId } from "./navigation";
 import { ESTIMATED_SESSION_MINUTES, getPlanDay, getStudyStatus, SYLLABUS } from "./syllabus";
 import type {
   AuthenticatedUser,
@@ -21,19 +22,6 @@ import type {
   StudyTopic,
   TopicProgress,
 } from "./types";
-
-export type SectionId = "dashboard" | "plan" | "syllabus" | "materials" | "ai" | "simulators" | "reviews" | "progress";
-
-export const NAV_ITEMS: { id: SectionId; label: string; icon: string }[] = [
-  { id: "dashboard", label: "Dashboard", icon: "grid" },
-  { id: "plan", label: "Mi plan de estudio", icon: "calendar" },
-  { id: "syllabus", label: "Temario", icon: "book" },
-  { id: "materials", label: "Mis materiales", icon: "spark" },
-  { id: "ai", label: "Estudiar con IA", icon: "spark" },
-  { id: "simulators", label: "Simulacros", icon: "check" },
-  { id: "reviews", label: "Repasos", icon: "refresh" },
-  { id: "progress", label: "Mi progreso", icon: "chart" },
-];
 
 export interface StudyData {
   progress: OverallProgress | null;
@@ -59,11 +47,13 @@ export function DashboardView({
   user,
   data,
   plan,
+  documents,
   onStartTopic,
   onNavigate,
 }: CommonProps & {
   user: AuthenticatedUser;
   data: StudyData;
+  documents: DocumentResponse[];
   onNavigate: (section: SectionId) => void;
 }) {
   const completedCount = Object.keys(plan.completed).filter((id) => SYLLABUS.some((topic) => topic.id === id)).length;
@@ -74,94 +64,156 @@ export function DashboardView({
     .filter(([id]) => SYLLABUS.some((topic) => topic.id === id))
     .sort((a, b) => b[1].localeCompare(a[1]))[0];
   const latestTopic = latestActivity ? SYLLABUS.find((topic) => topic.id === latestActivity[0]) : null;
+  const todayName = new Intl.DateTimeFormat("es-CO", { weekday: "long" }).format(new Date());
+  const todayPlanDay = todayName.charAt(0).toUpperCase() + todayName.slice(1);
+  const agenda = SYLLABUS.map((topic, index) => ({ topic, index }))
+    .filter(({ index }) => getPlanDay(index) === todayPlanDay)
+    .slice(0, 3);
+  const agendaItems = agenda.length ? agenda : SYLLABUS.filter((topic) => !plan.completed[topic.id]).slice(0, 3).map((topic) => ({
+    topic,
+    index: SYLLABUS.findIndex((item) => item.id === topic.id),
+  }));
+  const completedDocuments = documents.filter((document) => document.status === "COMPLETED").length;
+  const documentsUnavailable = data.failures.includes("documentos");
+  const reviewsUnavailable = data.failures.includes("repasos");
 
   return (
-    <div className="view-stack">
-      <header className="view-heading">
-        <div>
-          <p className="eyebrow">TU ESPACIO DE PREPARACIÓN</p>
-          <h1>Hola, {user.name || user.email.split("@")[0]}</h1>
-          <p>Un paso a la vez. Hoy puedes avanzar con una sesión enfocada.</p>
-        </div>
-        <div className="today-chip"><span aria-hidden="true">◷</span> {new Intl.DateTimeFormat("es-CO", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</div>
-      </header>
-
+    <div className="view-stack dashboard-page">
       {data.failures.length > 0 && (
         <p className="notice notice-info" role="status">Algunos datos del backend no están disponibles en este momento; las cifras que faltan no se estiman.</p>
       )}
 
-      <section className="dashboard-grid" aria-label="Resumen de estudio">
-        <article className="metric-card metric-primary">
-          <div className="metric-label">Temas estudiados · plan local <span aria-hidden="true">↗</span></div>
-          <strong className="metric-value">{completedCount}<small>/{SYLLABUS.length}</small></strong>
-          <div className="progress-track" role="progressbar" aria-label="Avance del plan personal" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionRate}><span style={{ width: `${completionRate}%` }} /></div>
-          <p>{completionRate}% de sesiones sugeridas marcadas en este dispositivo</p>
-        </article>
-        <article className="metric-card">
-          <div className="metric-label">Dominio registrado <span className="metric-icon">◎</span></div>
-          <strong className="metric-value">{data.progress?.masteryPercentage != null ? `${data.progress.masteryPercentage}%` : "—"}</strong>
-          <p>{data.progress?.masteryPercentage != null ? "Según respuestas y repasos registrados" : "Aún no hay datos suficientes"}</p>
-        </article>
-        <article className="metric-card">
-          <div className="metric-label">Intentos completados <span className="metric-icon">✓</span></div>
-          <strong className="metric-value">{data.progress?.completedQuizAttempts ?? "—"}</strong>
-          <p>{data.progress ? "Registrados por la plataforma" : "Dato no disponible"}</p>
-        </article>
-      </section>
-
-      <section className="dashboard-columns">
-        <article className="panel continue-panel">
-          <div className="panel-heading">
-            <div><p className="eyebrow">SESIÓN RECOMENDADA</p><h2>{nextTopic ? nextTopic.title : "Plan completado"}</h2></div>
-            <span className="panel-mark" aria-hidden="true">✦</span>
+      <header className="dashboard-hero">
+        <div className="hero-copy">
+          <p className="eyebrow">TU ESPACIO DE PREPARACIÓN</p>
+          <h1>Hola, {user.name || user.email.split("@")[0]}</h1>
+          <p>Tu camino al concurso se construye sesión a sesión. Retoma tu plan y avanza con foco.</p>
+          <div className="hero-actions">
+            {nextTopic
+              ? <button className="primary-button" onClick={() => onStartTopic(nextTopic.title)}>Continuar estudiando <span aria-hidden="true">→</span></button>
+              : <button className="primary-button" onClick={() => onNavigate("syllabus")}>Revisar el temario <span aria-hidden="true">→</span></button>}
+            <span className="hero-date"><span aria-hidden="true">◷</span>{new Intl.DateTimeFormat("es-CO", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</span>
           </div>
-          {nextTopic ? (
-            <>
-              <p className="muted-copy">{nextTopic.area} · Sesión sugerida de {ESTIMATED_SESSION_MINUTES} minutos</p>
-              <button className="primary-button" onClick={() => onStartTopic(nextTopic.title)}>Continuar estudiando <span aria-hidden="true">→</span></button>
-            </>
-          ) : <button className="secondary-button" onClick={() => onNavigate("syllabus")}>Revisar el temario</button>}
-        </article>
-        <article className="panel activity-panel">
-          <div className="panel-heading"><div><p className="eyebrow">ACTIVIDAD RECIENTE</p><h2>Tu actividad</h2></div></div>
-          {latestTopic ? (
-            <div className="activity-item"><span className="activity-check" aria-hidden="true">✓</span><div><strong>{latestTopic.title}</strong><p>Sesión completada localmente · {new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "short" }).format(new Date(latestActivity![1]))}</p></div></div>
-          ) : <p className="empty-copy">Aún no has marcado sesiones como completadas.</p>}
-          <button className="text-link" onClick={() => onNavigate("plan")}>Ver mi agenda <span aria-hidden="true">→</span></button>
-        </article>
-      </section>
-
-      <section className="panel area-panel">
-        <div className="panel-heading"><div><p className="eyebrow">TU RUTA</p><h2>Áreas de estudio</h2></div><button className="text-link" onClick={() => onNavigate("syllabus")}>Ver temario completo →</button></div>
-        <div className="area-cards">
-          {(["Conocimientos comunes", "Conocimientos específicos"] as const).map((area) => {
-            const areaTopics = SYLLABUS.filter((topic) => topic.area === area);
-            const finished = areaTopics.filter((topic) => plan.completed[topic.id]).length;
-            return <button className="area-card" key={area} onClick={() => onNavigate("syllabus")}>
-              <span className="area-icon" aria-hidden="true">{area === "Conocimientos comunes" ? "01" : "02"}</span>
-              <span className="area-name">{area}</span>
-              <span className="area-meta">{areaTopics.length} temas · {finished} sesiones completadas</span>
-              <span className="area-arrow" aria-hidden="true">↗</span>
-            </button>;
-          })}
         </div>
+        <div className="hero-art" aria-hidden="true">
+          <span className="hero-art-sun" />
+          <span className="hero-art-orbit hero-art-orbit-one" />
+          <span className="hero-art-orbit hero-art-orbit-two" />
+          <svg viewBox="0 0 310 220" role="presentation">
+            <path d="M56 177c20-54 42-83 82-87 46-5 75 29 116 74l18 13H56Z" fill="#c6dcf1" />
+            <path d="M72 170c12-37 33-58 63-58 33 0 48 20 73 58H72Z" fill="#a9c8e7" />
+            <path d="M102 143c0-41 24-73 56-73s56 32 56 73v37H102v-37Z" fill="#356daa" />
+            <path d="M158 70c-31 0-56 32-56 73v37h56V70Z" fill="#24496f" />
+            <path d="M119 142c0-29 17-52 39-52s39 23 39 52v32h-78v-32Z" fill="#fff" />
+            <path d="M158 90c-22 0-39 23-39 52v22h39V90Z" fill="#edf4fb" />
+            <path d="M131 119h19m-19 10h19m16-10h18m-18 10h18" stroke="#8db8e8" strokeWidth="3" strokeLinecap="round" />
+            <path d="M93 177h132" stroke="#24496f" strokeWidth="5" strokeLinecap="round" />
+            <path d="m247 95 6 13 14 2-10 10 2 14-12-7-12 7 2-14-10-10 14-2 6-13Z" fill="#fff" />
+            <circle cx="76" cy="111" r="7" fill="#fff" />
+            <circle cx="245" cy="55" r="4" fill="#8db8e8" />
+          </svg>
+          <div className="hero-art-note"><span className="hero-art-note-icon">✦</span><span><strong>Un tema a la vez</strong><small>Avanza a tu ritmo</small></span></div>
+        </div>
+      </header>
+
+      <section className="dashboard-stats" aria-label="Resumen de preparación">
+        <article className="dashboard-stat stat-study">
+          <span className="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21zM4 5.5V21m4-13h8m-8 4h8" /></svg></span>
+          <div><span className="stat-label">Temas estudiados</span><strong>{completedCount}<small> / {SYLLABUS.length}</small></strong><span className="stat-caption">Marcados en este dispositivo</span></div>
+        </article>
+        <article className="dashboard-stat stat-documents">
+          <span className="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm8 0v5h5m-9 5h5m-5 4h5" /></svg></span>
+          <div><span className="stat-label">Documentos</span><strong>{documentsUnavailable ? "—" : documents.length}</strong><span className="stat-caption">{documentsUnavailable ? "Dato no disponible" : `${completedDocuments} listos para consulta`}</span></div>
+        </article>
+        <article className="dashboard-stat stat-reviews">
+          <span className="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.9-3M4 4v4h4m-4 5a8 8 0 0 0 14.9 3M20 20v-4h-4" /></svg></span>
+          <div><span className="stat-label">Repasos pendientes</span><strong>{reviewsUnavailable ? "—" : data.reviews.length}</strong><span className="stat-caption">{reviewsUnavailable ? "Dato no disponible" : "Tarjetas indicadas por el backend"}</span></div>
+        </article>
+        <article className="dashboard-stat stat-attempts">
+          <span className="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8m-8 4h4m-4 4h3m5-4 1.5 1.5L20 10" /></svg></span>
+          <div><span className="stat-label">Intentos completados</span><strong>{data.progress?.completedQuizAttempts ?? (data.failures.includes("progreso") ? "—" : 0)}</strong><span className="stat-caption">{data.failures.includes("progreso") ? "Dato no disponible" : "Registrados por la plataforma"}</span></div>
+        </article>
       </section>
 
-      <section className="dashboard-bottom-grid">
-        <article className="panel compact-panel">
-          <div className="panel-heading"><div><p className="eyebrow">REPASO ESPACIADO</p><h2>Pendiente de repaso</h2></div></div>
-          <strong className="compact-number">{data.reviews.length}</strong>
-          <p>{data.reviews.length === 1 ? "tarjeta pendiente" : "tarjetas pendientes"} según el backend</p>
-          <button className="text-link" onClick={() => onNavigate("reviews")}>Ir a repasos →</button>
+      <section className="dashboard-feature-grid" aria-label="Sesión y actividad">
+        <article className="panel recommended-card">
+          <div className="recommended-topline"><span className="recommended-kicker"><span aria-hidden="true">✦</span> PARA TU PRÓXIMA SESIÓN</span><span className="recommended-duration">{ESTIMATED_SESSION_MINUTES} min sugeridos</span></div>
+          {nextTopic ? <>
+            <span className="recommended-area">{nextTopic.area}</span>
+            <h2>{nextTopic.title}</h2>
+            <p>Retoma tu preparación con una sesión breve y enfocada en el temario.</p>
+            <button className="primary-button" onClick={() => onStartTopic(nextTopic.title)}>Empezar sesión <span aria-hidden="true">→</span></button>
+          </> : <>
+            <h2>¡Completaste los temas de tu plan!</h2>
+            <p>Puedes volver al temario y revisar cualquier área cuando quieras.</p>
+            <button className="secondary-button" onClick={() => onNavigate("syllabus")}>Volver al temario</button>
+          </>}
+          <div className="recommended-watermark" aria-hidden="true">P</div>
         </article>
-        <article className="panel compact-panel">
-          <div className="panel-heading"><div><p className="eyebrow">PRACTICA LO APRENDIDO</p><h2>Simulacros disponibles</h2></div></div>
-          <strong className="compact-number">{data.quizzes.length}</strong>
-          <p>{data.quizzes.length === 1 ? "cuestionario disponible" : "cuestionarios disponibles"}</p>
-          <button className="text-link" onClick={() => onNavigate("simulators")}>Ver simulacros →</button>
+
+        <article className="panel recent-activity">
+          <div className="section-title-row"><div><p className="eyebrow">TU RECORRIDO</p><h2>Actividad reciente</h2></div><button className="text-link" onClick={() => onNavigate("plan")}>Ver agenda →</button></div>
+          {latestTopic ? <div className="recent-event">
+            <span className="recent-event-icon" aria-hidden="true">✓</span>
+            <div><strong>{latestTopic.title}</strong><p>Sesión completada localmente</p></div>
+            <time dateTime={latestActivity![1]}>{new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "short" }).format(new Date(latestActivity![1]))}</time>
+          </div> : <div className="activity-empty"><span className="activity-empty-mark" aria-hidden="true">✦</span><p>Aún no hay sesiones completadas. Tu actividad aparecerá aquí cuando avances en el plan.</p></div>}
+          <div className="activity-footer"><span>Actividad del plan personal</span><button className="text-link" onClick={() => onNavigate("plan")}>Abrir mi plan</button></div>
         </article>
       </section>
-      <p className="data-footnote">El avance del plan se guarda solo en este navegador. Las cifras de dominio, repasos e intentos provienen del backend.</p>
+
+      <section className="dashboard-lower-grid" aria-label="Ruta de preparación">
+        <article className="panel study-areas-panel">
+          <div className="section-title-row"><div><p className="eyebrow">TU RUTA DE PREPARACIÓN</p><h2>Áreas de estudio</h2></div><button className="text-link" onClick={() => onNavigate("syllabus")}>Ver temario completo →</button></div>
+          <div className="study-area-list">
+            {(["Conocimientos comunes", "Conocimientos específicos"] as const).map((area, index) => {
+              const areaTopics = SYLLABUS.filter((topic) => topic.area === area);
+              const finished = areaTopics.filter((topic) => plan.completed[topic.id]).length;
+              const rate = Math.round((finished / areaTopics.length) * 100);
+              return <button className="study-area-row" key={area} onClick={() => onNavigate("syllabus")}>
+                <span className={`study-area-symbol area-symbol-${index + 1}`} aria-hidden="true">{index === 0 ? "§" : "¶"}</span>
+                <span className="study-area-content"><span className="study-area-heading"><strong>{area}</strong><small>{finished} de {areaTopics.length} temas</small></span><span className="progress-track" role="progressbar" aria-label={`Avance de ${area}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={rate}><span style={{ width: `${rate}%` }} /></span></span>
+                <span className="study-area-arrow" aria-hidden="true">↗</span>
+              </button>;
+            })}
+          </div>
+        </article>
+
+        <article className="panel agenda-panel">
+          <div className="section-title-row"><div><p className="eyebrow">PLAN SUGERIDO</p><h2>Agenda de hoy</h2></div><span className="agenda-day">{todayPlanDay}</span></div>
+          {agendaItems.length ? <div className="agenda-list">{agendaItems.map(({ topic, index }) => {
+            const status = getStudyStatus(topic.id, plan.completed, plan.inProgressId);
+            return <button type="button" className={`agenda-item agenda-${status.toLowerCase().replace(" ", "-")}`} key={topic.id} onClick={() => onStartTopic(topic.title)}>
+              <span className="agenda-time">{String(index + 1).padStart(2, "0")}</span>
+              <span className="agenda-item-copy"><strong>{topic.title}</strong><small>{status} · ~{ESTIMATED_SESSION_MINUTES} min</small></span>
+              <span className="agenda-status" aria-label={status}>{status === "Completado" ? "✓" : "→"}</span>
+            </button>;
+          })}</div> : <p className="empty-copy">No hay sesiones pendientes en la ruta sugerida.</p>}
+          <button className="agenda-all-link" onClick={() => onNavigate("plan")}>Ver mi plan de estudio <span aria-hidden="true">→</span></button>
+        </article>
+      </section>
+
+      <section className="dashboard-last-grid" aria-label="Progreso y accesos rápidos">
+        <article className="panel progress-overview">
+          <div className="section-title-row"><div><p className="eyebrow">AVANCE PERSONAL</p><h2>Tu progreso</h2></div><button className="text-link" onClick={() => onNavigate("progress")}>Ver detalles →</button></div>
+          <div className="progress-overview-content">
+            <div className="progress-ring" role="progressbar" aria-label="Avance de temas del plan personal" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionRate} style={{ background: `conic-gradient(var(--blue) ${completionRate}%, #e6eef7 ${completionRate}% 100%)` }}>
+              <span><strong>{completionRate}%</strong><small>del plan</small></span>
+            </div>
+            <div className="progress-overview-detail"><strong>{completedCount} de {SYLLABUS.length} temas</strong><p>{completionRate}% de sesiones sugeridas marcadas en este dispositivo</p><div className="backend-progress-line"><span>Dominio registrado en plataforma</span><strong>{data.progress?.masteryPercentage != null ? `${data.progress.masteryPercentage}%` : "Sin datos"}</strong></div></div>
+          </div>
+        </article>
+        <article className="panel dashboard-shortcuts">
+          <div className="section-title-row"><div><p className="eyebrow">A UN TOQUE</p><h2>Accesos rápidos</h2></div></div>
+          <div className="shortcut-grid">
+            <button onClick={() => onNavigate("materials")}><span className="shortcut-icon shortcut-docs" aria-hidden="true">▤</span><span><strong>Mis documentos</strong><small>Subir y organizar</small></span><span aria-hidden="true">↗</span></button>
+            <button onClick={() => onNavigate("ai")}><span className="shortcut-icon shortcut-ai" aria-hidden="true">✦</span><span><strong>Estudiar con IA</strong><small>Consultar fuentes</small></span><span aria-hidden="true">↗</span></button>
+            <button onClick={() => onNavigate("simulators")}><span className="shortcut-icon shortcut-quiz" aria-hidden="true">✓</span><span><strong>Simulacros</strong><small>Practicar preguntas</small></span><span aria-hidden="true">↗</span></button>
+            <button onClick={() => onNavigate("reviews")}><span className="shortcut-icon shortcut-review" aria-hidden="true">↻</span><span><strong>Repasos</strong><small>Retomar tarjetas</small></span><span aria-hidden="true">↗</span></button>
+          </div>
+        </article>
+      </section>
+      <p className="data-footnote">El avance del plan y la agenda son locales y sugeridos. Dominio, repasos, documentos e intentos provienen del backend; el tiempo de estudio no se registra.</p>
     </div>
   );
 }
@@ -202,8 +254,9 @@ export function StudyPlanView({ plan, onStartTopic, onToggleComplete, onBegin }:
   );
 }
 
-export function SyllabusView({ plan, onStartTopic, onToggleComplete }: CommonProps & {
+export function SyllabusView({ plan, onStartTopic, onToggleComplete, onNavigate }: CommonProps & {
   onToggleComplete: (topicId: string) => void;
+  onNavigate: (section: SectionId) => void;
 }) {
   return (
     <div className="view-stack">
@@ -220,7 +273,7 @@ export function SyllabusView({ plan, onStartTopic, onToggleComplete }: CommonPro
                 <span className={`syllabus-check ${status === "Completado" ? "checked" : ""}`} aria-hidden="true">{status === "Completado" ? "✓" : ""}</span>
                 <div className="syllabus-title"><strong>{topic.title}</strong><span>{status === "Completado" ? "Sesión completada en este navegador" : status}</span></div>
                 <div className="syllabus-actions">
-                  <button className="text-button" onClick={() => onStartTopic(topic.title)}>Agregar material</button>
+                  <button className="text-button" onClick={() => onNavigate("materials")}>Ver materiales</button>
                   {status === "Completado" ? <button className="text-button" onClick={() => onToggleComplete(topic.id)}>Deshacer</button> : <button className="secondary-button small-button" onClick={() => onStartTopic(topic.title)}>Estudiar tema</button>}
                 </div>
               </article>;
@@ -232,8 +285,7 @@ export function SyllabusView({ plan, onStartTopic, onToggleComplete }: CommonPro
   );
 }
 
-export function MaterialsView({ auth, documents, onUpload, onDelete }: {
-  auth: { email: string; password: string };
+export function MaterialsView({ documents, onUpload, onDelete }: {
   documents: DocumentResponse[];
   onUpload: (file: File) => Promise<void>;
   onDelete: (documentId: string) => Promise<void>;
@@ -243,6 +295,16 @@ export function MaterialsView({ auth, documents, onUpload, onDelete }: {
   const [uploadError, setUploadError] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+
+  function getLocalFileError(file: File): string | null {
+    if (file.size === 0) return `${file.name}: el archivo está vacío.`;
+    if (file.size > 10 * 1024 * 1024) return `${file.name}: supera el límite de 10 MiB.`;
+    const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (![".pdf", ".txt", ".md"].includes(extension)) {
+      return `${file.name}: formato no compatible. Usa PDF, TXT o Markdown.`;
+    }
+    return null;
+  }
 
   const filteredDocuments = useMemo(() => {
     const query = filter.trim().toLowerCase();
@@ -255,6 +317,14 @@ export function MaterialsView({ auth, documents, onUpload, onDelete }: {
     setSelectedFiles(nextFiles);
     setUploadError("");
     if (!nextFiles.length) return;
+    const fileErrors = nextFiles.map(getLocalFileError)
+      .filter((error): error is string => error !== null);
+    if (fileErrors.length) {
+      setSelectedFiles([]);
+      setUploadError(fileErrors.join(" "));
+      event.target.value = "";
+      return;
+    }
     setUploading(true);
     try {
       for (const file of nextFiles) {
@@ -315,7 +385,7 @@ export function MaterialsView({ auth, documents, onUpload, onDelete }: {
                   <span>{new Date(document.uploadedAt).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" })}</span>
                 </div>
                 <div className="material-actions">
-                  <button type="button" className="secondary-button small-button" onClick={() => void onDelete(document.id)} disabled={pendingDeleteId === document.id}>{pendingDeleteId === document.id ? "Eliminando…" : "Eliminar"}</button>
+                  <button type="button" className="secondary-button small-button" onClick={() => void handleDelete(document.id)} disabled={pendingDeleteId === document.id}>{pendingDeleteId === document.id ? "Eliminando…" : "Eliminar"}</button>
                 </div>
               </article>
             ))}
